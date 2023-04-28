@@ -3,27 +3,55 @@ using Microsoft.Identity.Client;
 
 Console.WriteLine("Welcome to the world of appservices!");
 
-// TODO : replace it with your appp [ yoursite == yourapp]
-const string AppServiceScmBaseUri =  "https://yoursite.scm.azurewebsites.net";
-// Once in a lifetime of the app
+#region configurations
+// TODO
+/* Pre-Req : 
+ * Create identity (AAD App/SPN)
+ * Assign one of the relevant role to the idetity on the scoped appservice/function/logicapp [Website Contributor/Contributor/ Owner]
+ *  */
+const string AppServiceScmBaseUri = "https://[yoursitename].scm.azurewebsites.net";
+const string TenantId = "TENANT_ID";
+const string ClientId = "CLIENT_ID";
+// please note cert based credentials is also available, incase one goes with secret, please ensure this comes from keyvault and follows all the security guidelines of your group.
+const string ClientSecret = "CLIENT_SECRET";
+
+#endregion configurations
+
+// Please note resources like Client,ConfidentialClientApp in this case, should be initialized once in lifecyle of the app.
 var Client = new HttpClient();
 Client.DefaultRequestHeaders.TryAddWithoutValidation("Content-Type", "application/json");
+
+var ConfidentialClientApp = ConfidentialClientApplicationBuilder.Create(ClientId)
+                    .WithClientSecret(ClientSecret)
+                    .WithTenantId(TenantId)
+                    .Build();
 
 GetDeployments().Wait();
 Console.ReadLine();
 
+// Uses kudu API (.scm) to get deployments using AAD auth
+// https://github.com/projectkudu/kudu/wiki/REST-API
 async Task GetDeployments()
 {
     try
     {
-        var requestMessage = new HttpRequestMessage();
-        requestMessage.Method = HttpMethod.Get;
-        requestMessage.RequestUri = new Uri($"{AppServiceScmBaseUri}/api/deployments");
+        var requestMessage = new HttpRequestMessage
+        {
+            Method = HttpMethod.Get,
+            RequestUri = new Uri($"{AppServiceScmBaseUri}/api/deployments")
+        };
+
+        // AAD token via app/spn/identity
         var token = await GetToken();
         requestMessage.Headers.Add("Authorization", $"Bearer {token}");
+       
         var response = await Client.SendAsync(requestMessage);
+        response.EnsureSuccessStatusCode();
         var responseString = await response.Content.ReadAsStringAsync();
-        Console.WriteLine(responseString);
+        Console.WriteLine($" ----RequestUri---- : `{requestMessage.RequestUri}`");
+        Console.WriteLine($" ----ResponseStatusCode---- : {(int)response.StatusCode}");
+        Console.WriteLine($" ----Response----");
+        Console.WriteLine($"{responseString}");
     }
     catch (Exception ex)
     {
@@ -32,22 +60,11 @@ async Task GetDeployments()
     }
 }
 
+// GET accesstoken from aad app
 async Task<string> GetToken()
 {
-    // TODO : replace it with your values
-    var clientId = "client_id";
-    var clientSecret = "client_secret";
-    // TODO : this is for corp tenant, get the relevant value for your tenant
-    var authority = "https://login.microsoftonline.com/72f988bf-86f1-41af-91ab-2d7cd011db47";
-   
-    // TODO : This should be created once in a lifetime of the app
-    var app = ConfidentialClientApplicationBuilder.Create(clientId)
-                    .WithClientSecret(clientSecret)
-                    .WithAuthority(new Uri(authority))
-                    .Build();
-
+    // audience : https://management.core.windows.net
     var scopes = new[] { "https://management.core.windows.net/.default" };
-
-    var tokenResult = await app.AcquireTokenForClient(scopes).ExecuteAsync();
+    var tokenResult = await ConfidentialClientApp.AcquireTokenForClient(scopes).ExecuteAsync();
     return tokenResult.AccessToken;
 }
